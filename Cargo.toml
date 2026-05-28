@@ -1,0 +1,10 @@
+[package]
+name = "bevy-lua-rs-starter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = ["bevy_log", "bevy_state"] }
+lua-rs-runtime = { version = "0.0.9", features = ["derive"] }
