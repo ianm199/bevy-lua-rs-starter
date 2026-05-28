@@ -51,3 +51,20 @@ function behaviors.bounce(entity, dt)
     world:set(entity, "Position", p)
     world:set(entity, "Velocity", v)
 end
+
+-- "spiral" uses the scope-delegate API: world:position(entity) returns a
+-- userdata that re-acquires &mut Position from the World on every method
+-- call. Field mutation is direct, no clone-and-set round trip needed.
+-- Compare to behaviors.bounce above, which uses the older get/set style.
+function behaviors.spiral(entity, dt)
+    local p = world:position(entity)
+    local r = math.sqrt(p.x * p.x + p.y * p.y) + 6 * dt
+    local angle = math.atan(p.y, p.x) + dt * 1.4
+    p.x = math.cos(angle) * r
+    p.y = math.sin(angle) * r
+    -- Soft cap radius so the spiral wraps back inward.
+    if r > 220 then
+        p.x = p.x * 30 / r
+        p.y = p.y * 30 / r
+    end
+end

@@ -33,7 +33,20 @@ function on_load()
         )
     end
 
-    print("[lua] init: spawned wanderers, orbiters, and ping-pongers")
+    -- Three spiralers — exercise the scope-delegate API. Their tick body
+    -- mutates Position directly via world:position(entity), no clone/set
+    -- round-trip.
+    for i = 1, 3 do
+        local angle = i * 2.094  -- 120deg apart so they don't all overlap
+        local r = 40
+        world:spawn(
+            Position(math.cos(angle) * r, math.sin(angle) * r),
+            Velocity(0, 0),
+            LuaBehavior("spiral")
+        )
+    end
+
+    print("[lua] init: spawned wanderers, orbiters, ping-pongers, and spiralers")
 end
 
 function rand_pos()

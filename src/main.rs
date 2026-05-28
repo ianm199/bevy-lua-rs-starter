@@ -183,6 +183,14 @@ impl LuaWorld {
         let world: &mut World = unsafe { &mut *self.ptr.as_ptr() };
         f(world)
     }
+
+    /// Direct `&mut World` accessor used by `AnyUserData::delegate` accessors,
+    /// which need to return `&mut S` from `&mut LuaWorld` (not a callback).
+    /// Same safety contract as [`Self::with`].
+    fn world_mut(&mut self) -> &mut World {
+        // SAFETY: same as `Self::with`.
+        unsafe { &mut *self.ptr.as_ptr() }
+    }
 }
 
 fn try_insert_component(entity: &mut EntityWorldMut, ud: &AnyUserData) -> LuaResult<()> {
@@ -339,6 +347,44 @@ impl UserData for LuaWorld {
             this.with(|world| {
                 world.despawn(entity.0);
                 Ok(())
+            })
+        });
+
+        // Scope-delegated component accessors. `world:position(e)` and
+        // `world:velocity(e)` return sub-userdata that re-acquire `&mut
+        // Position` / `&mut Velocity` from World on every method call.
+        // Lua side gets direct property mutation, no clone-and-set round
+        // trip:
+        //
+        //     local p = world:position(entity)
+        //     p.x = p.x + v.x * dt
+        //
+        // versus the older clone-style:
+        //
+        //     local p = world:get(entity, "Position")
+        //     p.x = p.x + v.x * dt
+        //     world:set(entity, "Position", p)
+        //
+        // Both styles coexist; the older one stays available for callers
+        // that prefer it.
+        m.add_function("position", |lua, args: (AnyUserData, EntityHandle)| {
+            let (this, entity) = args;
+            let id = entity.0;
+            this.delegate::<LuaWorld, Position, _>(lua, move |lw| {
+                lw.world_mut()
+                    .get_mut::<Position>(id)
+                    .expect("entity has no Position")
+                    .into_inner()
+            })
+        });
+        m.add_function("velocity", |lua, args: (AnyUserData, EntityHandle)| {
+            let (this, entity) = args;
+            let id = entity.0;
+            this.delegate::<LuaWorld, Velocity, _>(lua, move |lw| {
+                lw.world_mut()
+                    .get_mut::<Velocity>(id)
+                    .expect("entity has no Velocity")
+                    .into_inner()
             })
         });
     }
@@ -505,6 +551,7 @@ fn ensure_visuals(
             Some("wander") => Color::srgb(0.95, 0.45, 0.30),
             Some("orbit") => Color::srgb(0.30, 0.75, 0.95),
             Some("bounce") => Color::srgb(0.45, 0.95, 0.50),
+            Some("spiral") => Color::srgb(0.95, 0.85, 0.30),
             _ => Color::srgb(0.80, 0.80, 0.80),
         };
         commands.entity(entity).insert((
