@@ -1,7 +1,8 @@
 //! bevy-lua-rs-starter
 //!
-//! Bevy 0.18 + lua-rs 0.0.9, runs natively and on wasm. Demonstrates the
-//! ECS-direct scripting shape requested in ianm199/lua-rs#23.
+//! Bevy 0.18 + lua-rs (scope-API branch), runs natively and on wasm.
+//! Demonstrates the ECS-direct scripting shape requested in
+//! ianm199/lua-rs#23, refactored on lua-rs#26 (`Lua::scope`).
 //!
 //! Architecture:
 //! - Components (`Position`, `Velocity`, `LuaBehavior`) are real Bevy `Component`
@@ -11,18 +12,24 @@
 //! - Multiple Lua scripts loaded into the same VM at startup. Each defines its
 //!   own globals/helpers; one shared `behaviors` table holds named per-entity
 //!   behaviors keyed by string.
-//! - A `world` global gives scripts `spawn`/`each`/`get`/`set`/`despawn`. While
-//!   a Bevy system is calling into Lua, the world pointer is stashed in a
-//!   thread-local so the world methods can borrow it back without trying to
-//!   thread `&mut World` through Lua values.
+//! - A `world` global is created fresh per system body via `Lua::scope`. The
+//!   scope wraps the system's `&mut World` as a userdata that lives only for
+//!   that scope. When the scope ends Bevy gets the world back; if a script
+//!   stashed the userdata on a global and tries to use it on a later frame,
+//!   the call surfaces a clean Lua runtime error instead of touching the
+//!   released borrow. This replaces the thread_local pointer indirection the
+//!   pre-scope-API version used.
 //! - Each frame Rust iterates entities that have a `LuaBehavior` component and
 //!   calls `behaviors[name](entity, dt)` for each. That is the per-entity
 //!   scripting model (one VM, many scripts, each entity opts in to a behavior).
+//! - A scoped Rust closure `log_event` (built fresh per frame) borrows a stack
+//!   `&mut Vec<String>` and lets the scripts push frame-local events into it.
+//!   This exercises the other half of the scope API — `scope.create_function`.
 //! - Bevy renders each entity as a coloured sprite; a sync system mirrors
 //!   `Position` into `Transform` so the simulation logic stays in plain Lua
 //!   coordinates and the renderer doesn't care.
 
-use std::cell::RefCell;
+use std::ptr::NonNull;
 
 use bevy::asset::AssetMetaCheck;
 use bevy::color::Color;
@@ -136,38 +143,47 @@ impl FromLua for EntityHandle {
 }
 
 // ============================================================================
-// World access via a thread-local pointer
+// World userdata (scope-bound)
 // ============================================================================
 
-thread_local! {
-    static WORLD_CELL: RefCell<Option<*mut World>> = const { RefCell::new(None) };
+/// `LuaWorld` is the Lua-facing handle to Bevy's `World`. It is *only* created
+/// inside `Lua::scope` (see `with_scoped_world` below); the scope guarantees
+/// that any access from Lua to this userdata after the scope ends fails with a
+/// clean "no longer valid" runtime error rather than touching the released
+/// `&mut World`.
+///
+/// The single unsafe block in this struct's methods derefs `ptr` to get a
+/// `&mut World` for the immediate operation. Discipline: never hold the
+/// derived `&mut World` across a `callback.call` re-entry into Lua — extract
+/// what you need (e.g. query results into an owned `Vec`), drop the borrow,
+/// then call back. The pre-scope-API version of this file enforced the same
+/// discipline through `with_world_mut`; the shape carries over.
+pub struct LuaWorld {
+    ptr: NonNull<World>,
 }
 
-fn with_world<R>(world: &mut World, f: impl FnOnce() -> R) -> R {
-    WORLD_CELL.with(|c| *c.borrow_mut() = Some(world as *mut World));
-    let out = f();
-    WORLD_CELL.with(|c| *c.borrow_mut() = None);
-    out
+impl LuaWorld {
+    /// SAFETY: caller guarantees `ptr` points at a live `World` for the
+    /// duration of the scope into which this `LuaWorld` is handed.
+    unsafe fn new(world: &mut World) -> Self {
+        Self {
+            ptr: NonNull::from(world),
+        }
+    }
+
+    /// Borrow the world for one Rust-side operation. The returned `&mut
+    /// World` must not outlive the calling closure; in particular it must
+    /// not be alive when control re-enters Lua, or two `&mut World` borrows
+    /// could be reachable at once.
+    fn with<R>(&self, f: impl FnOnce(&mut World) -> R) -> R {
+        // SAFETY: `ptr` is only constructed inside `with_scoped_world`, which
+        // is the only place that owns the originating `&mut World`. Lua
+        // method bodies run synchronously inside that exclusive borrow, and
+        // we drop the derived `&mut World` before any re-entry into Lua.
+        let world: &mut World = unsafe { &mut *self.ptr.as_ptr() };
+        f(world)
+    }
 }
-
-fn with_world_mut<R>(f: impl FnOnce(&mut World) -> LuaResult<R>) -> LuaResult<R> {
-    WORLD_CELL.with(|c| match *c.borrow() {
-        // SAFETY: pointer is only set inside `with_world`, which holds an
-        // exclusive borrow on the `World` for the duration of `f`. Lua callbacks
-        // run synchronously inside that borrow.
-        Some(ptr) => f(unsafe { &mut *ptr }),
-        None => Err(LuaError::runtime(format_args!(
-            "world is only accessible inside on_load / behaviors / world:each callbacks"
-        ))),
-    })
-}
-
-// ============================================================================
-// `world` global
-// ============================================================================
-
-#[derive(Clone, Copy)]
-struct WorldProxy;
 
 fn try_insert_component(entity: &mut EntityWorldMut, ud: &AnyUserData) -> LuaResult<()> {
     if let Ok(c) = ud.borrow::<Position>() {
@@ -272,10 +288,10 @@ fn set_component(world: &mut World, entity: Entity, name: &str, value: Value) ->
     Ok(())
 }
 
-impl UserData for WorldProxy {
+impl UserData for LuaWorld {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
-        m.add_method("spawn", |_lua, _this, args: Variadic<Value>| {
-            with_world_mut(|world| {
+        m.add_method("spawn", |_lua, this, args: Variadic<Value>| {
+            this.with(|world| {
                 let mut entity = world.spawn_empty();
                 for value in args.into_iter() {
                     match value {
@@ -293,8 +309,11 @@ impl UserData for WorldProxy {
 
         m.add_method(
             "each",
-            |lua, _this, (name, callback): (String, Function)| {
-                let pairs = with_world_mut(|world| query_entries(world, lua, &name))?;
+            |lua, this, (name, callback): (String, Function)| {
+                // Extract pairs while holding `&mut World`, drop the borrow,
+                // then run callbacks. This keeps a Lua re-entry from
+                // observing two live `&mut World`s through the same pointer.
+                let pairs = this.with(|world| query_entries(world, lua, &name))?;
                 for (entity, value) in pairs {
                     let _: Value = callback.call((EntityHandle(entity), value))?;
                 }
@@ -304,20 +323,20 @@ impl UserData for WorldProxy {
 
         m.add_method(
             "get",
-            |lua, _this, (entity, name): (EntityHandle, String)| {
-                with_world_mut(|world| get_component(world, entity.0, &name, lua))
+            |lua, this, (entity, name): (EntityHandle, String)| {
+                this.with(|world| get_component(world, entity.0, &name, lua))
             },
         );
 
         m.add_method(
             "set",
-            |_lua, _this, (entity, name, value): (EntityHandle, String, Value)| {
-                with_world_mut(|world| set_component(world, entity.0, &name, value))
+            |_lua, this, (entity, name, value): (EntityHandle, String, Value)| {
+                this.with(|world| set_component(world, entity.0, &name, value))
             },
         );
 
-        m.add_method("despawn", |_lua, _this, entity: EntityHandle| {
-            with_world_mut(|world| {
+        m.add_method("despawn", |_lua, this, entity: EntityHandle| {
+            this.with(|world| {
                 world.despawn(entity.0);
                 Ok(())
             })
@@ -360,11 +379,10 @@ fn install_globals(lua: &Lua) -> LuaResult<()> {
         "LuaBehavior",
         lua.create_function(|_, name: String| Ok(LuaBehavior { name }))?,
     )?;
-    let world = lua.create_userdata(WorldProxy)?;
-    globals.set("world", world)?;
 
     // Override Lua's `print` to go through `bevy::log` rather than the default
-    // stdout hook, which is not wired on wasm.
+    // stdout hook, which is not wired on wasm. The `world` and `log_event`
+    // globals are set per-scope in `with_scoped_world` below.
     globals.set(
         "print",
         lua.create_function(|_, msg: String| {
@@ -375,12 +393,43 @@ fn install_globals(lua: &Lua) -> LuaResult<()> {
     Ok(())
 }
 
+/// Run a block of Rust code with `world` and `log_event` installed on the Lua
+/// globals, both backed by scope-bound borrows of the current system's `&mut
+/// World` and `&mut Vec<String>`. After this returns, both globals exist but
+/// any call into them surfaces a "no longer valid" Lua error instead of
+/// touching the released borrows.
+///
+/// `log_event` exercises the [`scope.create_function`] half of the API: the
+/// captured `&mut Vec<String>` is borrowed from this stack frame, not owned
+/// by Lua.
+fn with_scoped_world<R>(
+    lua: &Lua,
+    world: &mut World,
+    events: &mut Vec<String>,
+    body: impl for<'scope> FnOnce(&Lua) -> LuaResult<R>,
+) -> LuaResult<R> {
+    // SAFETY: the `LuaWorld` borrows `world` for the lifetime of the
+    // surrounding scope body; we hand it to `scope.create_userdata` as a
+    // `&'scope mut LuaWorld`, so the scope's cell invalidates on return.
+    let mut lua_world = unsafe { LuaWorld::new(world) };
+    lua.scope(|scope| {
+        let world_ud = scope.create_userdata(lua, &mut lua_world)?;
+        let log_event = scope.create_function_mut(lua, |_lua, msg: String| {
+            events.push(msg);
+            Ok(())
+        })?;
+        lua.globals().set("world", &world_ud)?;
+        lua.globals().set("log_event", &log_event)?;
+        body(lua)
+    })
+}
+
 /// Loads every script into the same VM at startup, in order, then calls
-/// `on_load()`. The world pointer is set for the duration so `world:spawn`
-/// inside `on_load` works.
+/// `on_load()` with the world handed in via scope.
 fn load_scripts(world: &mut World) {
-    with_world(world, || {
-        let lua = world_lua();
+    let lua = world.non_send_resource::<LuaRuntime>().lua.clone();
+    let mut events: Vec<String> = Vec::new();
+    let result = with_scoped_world(&lua, world, &mut events, |lua| {
         for (name, src) in [
             ("behaviors.lua", SCRIPT_BEHAVIORS),
             ("init.lua", SCRIPT_INIT),
@@ -394,12 +443,19 @@ fn load_scripts(world: &mut World) {
                 error!("on_load: {e}");
             }
         }
+        Ok(())
     });
+    if let Err(e) = result {
+        error!("scope error in load_scripts: {e}");
+    }
+    for event in events {
+        bevy::log::info!("[lua-event] {event}");
+    }
 }
 
 /// Look up each entity's `LuaBehavior` and call `behaviors[name](entity, dt)`.
-/// Entities are collected outside the `with_world` so we don't hold a query
-/// borrow across Lua reentry.
+/// Entities are collected before the scope so we don't hold a query borrow
+/// across Lua reentry.
 fn tick_behaviors(world: &mut World) {
     let dt = world.resource::<Time>().delta_secs() as f64;
     let pairs: Vec<(Entity, String)> = {
@@ -410,9 +466,10 @@ fn tick_behaviors(world: &mut World) {
         return;
     }
     let lua = world.non_send_resource::<LuaRuntime>().lua.clone();
-    with_world(world, || {
+    let mut events: Vec<String> = Vec::new();
+    let result = with_scoped_world(&lua, world, &mut events, |lua| {
         let Ok(behaviors) = lua.globals().get::<_, Table>("behaviors") else {
-            return;
+            return Ok(());
         };
         for (entity, name) in pairs {
             let Ok(func) = behaviors.get::<_, Function>(name.as_str()) else {
@@ -422,18 +479,14 @@ fn tick_behaviors(world: &mut World) {
                 error!("behavior '{name}' on {entity:?}: {e}");
             }
         }
+        Ok(())
     });
-}
-
-fn world_lua() -> Lua {
-    WORLD_CELL.with(|c| {
-        let ptr = c
-            .borrow()
-            .expect("world_lua called outside with_world");
-        // SAFETY: same invariant as `with_world_mut`.
-        let world: &mut World = unsafe { &mut *ptr };
-        world.non_send_resource::<LuaRuntime>().lua.clone()
-    })
+    if let Err(e) = result {
+        error!("scope error in tick_behaviors: {e}");
+    }
+    for event in events {
+        bevy::log::info!("[lua-event] {event}");
+    }
 }
 
 // ============================================================================

@@ -7,7 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 bevy = "0.18"
-lua-rs-runtime = { version = "0.0.9", features = ["derive"] }
+lua-rs-runtime = { git = "https://github.com/ianm199/lua-rs.git", branch = "feat/scope-api", features = ["derive"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
