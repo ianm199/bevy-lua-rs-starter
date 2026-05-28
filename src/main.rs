@@ -409,11 +409,11 @@ fn with_scoped_world<R>(
     body: impl for<'scope> FnOnce(&Lua) -> LuaResult<R>,
 ) -> LuaResult<R> {
     // SAFETY: the `LuaWorld` borrows `world` for the lifetime of the
-    // surrounding scope body; we hand it to `scope.create_userdata` as a
-    // `&'scope mut LuaWorld`, so the scope's cell invalidates on return.
+    // surrounding scope body; we hand it to `scope.create_userdata_ref_mut`
+    // as a `&'scope mut LuaWorld`, so the scope's cell invalidates on return.
     let mut lua_world = unsafe { LuaWorld::new(world) };
     lua.scope(|scope| {
-        let world_ud = scope.create_userdata(lua, &mut lua_world)?;
+        let world_ud = scope.create_userdata_ref_mut(lua, &mut lua_world)?;
         let log_event = scope.create_function_mut(lua, |_lua, msg: String| {
             events.push(msg);
             Ok(())
