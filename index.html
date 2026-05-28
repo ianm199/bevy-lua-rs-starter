@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>bevy-lua-rs-starter</title>
+  
+<script type="module">
+import init, * as bindings from '/bevy-lua-rs-starter/bevy-lua-rs-starter-5209c5d3c4ebb0fd.js';
+const wasm = await init({ module_or_path: '/bevy-lua-rs-starter/bevy-lua-rs-starter-5209c5d3c4ebb0fd_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #0a0a12; color: #e6e6ef;
+      font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; overflow: hidden; }
+    #app { display: grid; grid-template-rows: auto 1fr auto; height: 100%; }
+    #header { padding: 12px 16px; border-bottom: 1px solid #23232f; }
+    #header h1 { margin: 0 0 4px; font-size: 16px; }
+    #header p { margin: 0; color: #9aa; font-size: 12.5px; }
+    #header a { color: #8fd0a0; }
+    #stage { position: relative; min-height: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+    #legend { padding: 10px 16px; border-top: 1px solid #23232f; color: #bcc;
+      font-size: 12.5px; display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+    .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+      vertical-align: middle; margin-right: 6px; }
+    .wander { background: #f37250; }
+    .orbit { background: #4dbfee; }
+    .bounce { background: #75f380; }
+  </style>
+<link rel="modulepreload" href="/bevy-lua-rs-starter/bevy-lua-rs-starter-5209c5d3c4ebb0fd.js" crossorigin="anonymous" integrity="sha384-IwYT8KN2Z6GAbk/LEy6cPp5H+2tbWlMW9gTPuDtcOOCcljKO+Q2ZpIQwY4avTn7r"><link rel="preload" href="/bevy-lua-rs-starter/bevy-lua-rs-starter-5209c5d3c4ebb0fd_bg.wasm" crossorigin="anonymous" integrity="sha384-e56AuXgsXkPBxusdbfd2A3BH23SovBTXI0vFl4lLZMLnI0wGVrnvWbxK2fwOZ9c5" as="fetch" type="application/wasm"></head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>bevy-lua-rs-starter</h1>
+      <p>A minimal ECS-direct Lua scripting integration for Bevy 0.18, on
+        <a href="https://crates.io/crates/lua-rs-runtime">lua-rs</a>. Every
+        moving sprite is an entity whose tick is a Lua function looked up by
+        name from a <code>behaviors</code> table. Source:
+        <a href="https://github.com/ianm199/bevy-lua-rs-starter">github</a> ·
+        Context: <a href="https://github.com/ianm199/lua-rs/issues/23">lua-rs#23</a>.</p>
+    </header>
+    <div id="stage"><canvas id="bevy"></canvas></div>
+    <footer id="legend">
+      <span><span class="swatch wander"></span>wander (random walk, wraps)</span>
+      <span><span class="swatch orbit"></span>orbit (around the origin)</span>
+      <span><span class="swatch bounce"></span>bounce (off invisible walls)</span>
+      <span style="margin-left:auto;color:#778;">each behavior is a separate Lua function in <code>behaviors.lua</code></span>
+    </footer>
+  </div>
+</body>
+</html>
