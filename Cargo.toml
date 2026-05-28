@@ -6,5 +6,9 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-bevy = { version = "0.18", default-features = false, features = ["bevy_log", "bevy_state"] }
+bevy = "0.18"
 lua-rs-runtime = { version = "0.0.9", features = ["derive"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2"
