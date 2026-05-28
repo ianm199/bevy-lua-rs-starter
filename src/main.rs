@@ -29,9 +29,30 @@ use bevy::color::Color;
 use bevy::prelude::*;
 
 use lua_rs_runtime::{
-    lua_methods, AnyUserData, FromLua, Function, IntoLua, Lua, LuaError, LuaUserData, MetaMethod,
-    Result as LuaResult, Table, UserData, UserDataMethods, Value, Variadic,
+    lua_methods, AnyUserData, FromLua, Function, HostHooks, IntoLua, Lua, LuaError, LuaUserData,
+    MetaMethod, Result as LuaResult, Table, UserData, UserDataMethods, Value, Variadic,
 };
+
+/// `os.time()` panics on `wasm32-unknown-unknown` without a host-supplied hook
+/// (no system clock). Native uses `SystemTime`; wasm uses a monotonic counter
+/// rooted at a plausible epoch so `math.randomseed(os.time())` still gets a
+/// distinct value per script reload. Real apps should plug in `web_time` or
+/// `Performance.now()` via `wasm_bindgen`.
+fn host_unix_time() -> i64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static COUNTER: AtomicI64 = AtomicI64::new(1_700_000_000);
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+}
 
 // Two scripts compiled into the binary so the demo runs identically on native
 // and wasm without an asset server. A real game would load these from disk.
@@ -316,7 +337,8 @@ pub struct LuaScriptingPlugin;
 
 impl Plugin for LuaScriptingPlugin {
     fn build(&self, app: &mut App) {
-        let lua = Lua::new();
+        let lua = Lua::with_hooks(HostHooks::default().unix_time(host_unix_time))
+            .expect("init lua with hooks");
         install_globals(&lua).expect("install lua globals");
         app.insert_non_send_resource(LuaRuntime { lua });
         app.add_systems(Startup, load_scripts);
@@ -340,6 +362,16 @@ fn install_globals(lua: &Lua) -> LuaResult<()> {
     )?;
     let world = lua.create_userdata(WorldProxy)?;
     globals.set("world", world)?;
+
+    // Override Lua's `print` to go through `bevy::log` rather than the default
+    // stdout hook, which is not wired on wasm.
+    globals.set(
+        "print",
+        lua.create_function(|_, msg: String| {
+            bevy::log::info!("[lua] {msg}");
+            Ok(())
+        })?,
+    )?;
     Ok(())
 }
 
