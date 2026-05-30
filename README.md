@@ -7,6 +7,10 @@ This is a response to [lua-rs#23](https://github.com/ianm199/lua-rs/issues/23),
 where the ask was specifically for *"a different API based on ECS with direct
 integration with specific crate (without being language agnostic)"*.
 
+**▶ Live demo: <https://ianm199.github.io/bevy-lua-rs-starter/>** — the same app
+compiled to WebAssembly, running the Lua-driven ECS simulation on a canvas right
+in your browser.
+
 ## What it does
 
 Runs a headless Bevy 0.18 app that loads `scripts/game.lua`, calls `on_load()`,
@@ -103,7 +107,7 @@ which is a clean follow-on.
 cargo run
 ```
 
-Needs Bevy 0.18 and a recent Rust. `lua-rs-runtime = "0.0.9"` from crates.io
+Needs Bevy 0.18 and a recent Rust. `lua-rs-runtime = "0.0.18"` from crates.io
 pulls in the new derive macros.
 
 ## License
