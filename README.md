@@ -1,6 +1,6 @@
 # bevy-lua-rs-starter
 
-A minimal Bevy + `lua-rs` integration showing what an ECS-direct Lua scripting
+A minimal Bevy + `omniLua` integration showing what an ECS-direct Lua scripting
 backend can look like without going through `bevy_mod_scripting`.
 
 This is a response to [lua-rs#23](https://github.com/ianm199/lua-rs/issues/23),
@@ -94,7 +94,7 @@ which is a clean follow-on.
 
 ## What this is and isn't
 
-- It **is** a working sketch of the ECS-direct Lua integration shape lua-rs
+- It **is** a working sketch of the ECS-direct Lua integration shape omniLua
   was designed to support. About 300 lines, one binary, no extra crates.
 - It **isn't** a finished library. There's no `register_lua_component::<T>()`
   builder, no replication-aware scripting story, no event-bus integration, no
@@ -107,7 +107,7 @@ which is a clean follow-on.
 cargo run
 ```
 
-Needs Bevy 0.18 and a recent Rust. `lua-rs-runtime = "0.0.18"` from crates.io
+Needs Bevy 0.18 and a recent Rust. `omnilua = "0.1.0"` from crates.io
 pulls in the new derive macros.
 
 ## License

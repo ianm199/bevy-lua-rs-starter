@@ -1,6 +1,6 @@
 //! bevy-lua-rs-starter
 //!
-//! Bevy 0.18 + lua-rs (scope-API branch), runs natively and on wasm.
+//! Bevy 0.18 + omniLua (scope API), runs natively and on wasm.
 //! Demonstrates the ECS-direct scripting shape requested in
 //! ianm199/lua-rs#23, refactored on lua-rs#26 (`Lua::scope`).
 //!
@@ -35,7 +35,7 @@ use bevy::asset::AssetMetaCheck;
 use bevy::color::Color;
 use bevy::prelude::*;
 
-use lua_rs_runtime::{
+use omnilua::{
     lua_methods, AnyUserData, FromLua, Function, HostHooks, IntoLua, Lua, LuaError, LuaUserData,
     MetaMethod, Result as LuaResult, Table, UserData, UserDataMethods, Value, Variadic,
 };

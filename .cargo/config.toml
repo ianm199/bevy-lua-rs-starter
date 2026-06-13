@@ -1,4 +1,4 @@
-# A bigger wasm linker stack is required for lua-rs's pcall path on the web,
+# A bigger wasm linker stack is required for omniLua's pcall path on the web,
 # matching what bms-lua-rs ships. See lua-rs#23 for context.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=-zstack-size=16777216"]
